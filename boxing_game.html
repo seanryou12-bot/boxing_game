@@ -1,0 +1,1587 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOTION TEKKEN - 카메라 모션 인식 철권 격투 게임</title>
+    <!-- Tailwind CSS 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 아케이드 스타일 폰트 로드 -->
+    <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #090d16;
+            color: #f8fafc;
+            overflow-x: hidden;
+            user-select: none;
+        }
+        .font-arcade {
+            font-family: 'Black Han Sans', sans-serif;
+            letter-spacing: 0.04em;
+        }
+        /* 웹캠 거울 모드(좌우 반전) */
+        .mirror-video {
+            transform: scaleX(-1);
+        }
+        /* 체력바 기울기 효과 (철권 HUD 감성) */
+        .hp-bar-left {
+            clip-path: polygon(0 0, 100% 0, 96% 100%, 0% 100%);
+        }
+        .hp-bar-right {
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 4% 100%);
+        }
+        /* 타격 시 화면 흔들림 애니메이션 */
+        @keyframes screenShake {
+            0%, 100% { transform: translate(0, 0); }
+            20% { transform: translate(-8px, 5px); }
+            40% { transform: translate(8px, -5px); }
+            60% { transform: translate(-6px, -4px); }
+            80% { transform: translate(6px, 4px); }
+        }
+        .shake-active {
+            animation: screenShake 0.22s ease-in-out;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-2 sm:p-4 bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950">
+
+    <!-- 상단 헤더 & 컨트롤 바 -->
+    <header class="w-full max-w-6xl flex flex-wrap items-center justify-between gap-2 bg-slate-900/80 border border-slate-700/60 px-4 py-2.5 rounded-2xl backdrop-blur-md shadow-xl">
+        <div class="flex items-center gap-3">
+            <span class="px-2.5 py-1 text-xs font-black bg-gradient-to-r from-amber-500 to-red-600 text-white rounded-lg shadow">ARCADE 1VS1</span>
+            <h1 class="font-arcade text-xl sm:text-2xl text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-amber-300">
+                MOTION TEKKEN
+            </h1>
+        </div>
+
+        <div class="flex items-center gap-2 sm:gap-3">
+            <!-- 카메라 상태 배지 -->
+            <div id="camStatusBadge" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-600 text-xs font-semibold text-slate-300">
+                <span id="camStatusDot" class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                <span id="camStatusText">카메라 대기 중</span>
+            </div>
+
+            <!-- 카메라 켜기/끄기 버튼 -->
+            <button id="toggleCamBtn" class="px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 transition font-bold text-xs sm:text-sm text-white shadow-lg shadow-cyan-600/30 cursor-pointer">
+                📷 카메라 켜기
+            </button>
+        </div>
+    </header>
+
+    <!-- 메인 게임 스테이지 영역 -->
+    <main id="gameStageContainer" class="relative w-full max-w-6xl flex-1 my-2 sm:my-3 rounded-3xl overflow-hidden border-2 border-slate-700/80 shadow-2xl bg-slate-950 flex flex-col justify-between min-h-[430px] sm:min-h-[530px]">
+
+        <!-- 상단 철권 스타일 체력(HP) & 타이머 HUD -->
+        <div class="relative z-20 w-full px-3 sm:px-6 pt-3 sm:pt-4 pointer-events-none">
+            <div class="flex items-center justify-between gap-2 sm:gap-4">
+                <!-- 플레이어(P1) 체력바 -->
+                <div class="flex-1">
+                    <div class="flex justify-between items-end mb-1 px-1">
+                        <span class="font-arcade text-sm sm:text-lg text-cyan-300 drop-shadow">P1. YOU (PLAYER)</span>
+                        <span id="p1HpText" class="text-xs sm:text-sm font-black text-white">100%</span>
+                    </div>
+                    <div class="w-full h-5 sm:h-7 bg-slate-900/90 border-2 border-cyan-500/60 p-0.5 hp-bar-left shadow-lg overflow-hidden">
+                        <div id="p1HpBar" class="h-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 transition-all duration-150" style="width: 100%;"></div>
+                    </div>
+                    <!-- 콤보 카운터 -->
+                    <div id="p1ComboBox" class="mt-1.5 h-6 opacity-0 transition-opacity duration-200">
+                        <span class="font-arcade text-lg sm:text-2xl text-amber-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+                            <span id="p1ComboCount">0</span> HIT COMBO!
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 중앙 라운드 타이머 -->
+                <div class="flex flex-col items-center justify-center bg-slate-900/95 border-2 border-amber-400/80 rounded-2xl px-3 sm:px-5 py-1.5 shadow-xl">
+                    <span class="text-[10px] font-bold tracking-widest text-amber-300">TIME</span>
+                    <span id="timerText" class="font-arcade text-2xl sm:text-4xl text-white leading-none">60</span>
+                </div>
+
+                <!-- AI(CPU) 체력바 -->
+                <div class="flex-1">
+                    <div class="flex justify-between items-end mb-1 px-1">
+                        <span id="aiHpText" class="text-xs sm:text-sm font-black text-white">100%</span>
+                        <span class="font-arcade text-sm sm:text-lg text-red-400 drop-shadow">CPU. MASTER AI</span>
+                    </div>
+                    <div class="w-full h-5 sm:h-7 bg-slate-900/90 border-2 border-red-500/60 p-0.5 hp-bar-right shadow-lg overflow-hidden">
+                        <div id="aiHpBar" class="h-full bg-gradient-to-l from-red-600 via-orange-500 to-yellow-400 transition-all duration-150 ml-auto" style="width: 100%;"></div>
+                    </div>
+                    <!-- AI 상태 표시 -->
+                    <div class="mt-2 text-right">
+                        <span id="aiStateBadge" class="inline-block px-2 py-0.5 text-[11px] font-bold rounded bg-red-950/80 border border-red-700/50 text-red-300">
+                            MASTER AI 대기 중
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 격투 애니메이션 메인 캔버스 -->
+        <canvas id="fightCanvas" class="absolute inset-0 w-full h-full z-10"></canvas>
+
+        <!-- 중앙 알림 / 시작 / KO 오버레이 -->
+        <div id="centerOverlay" class="hidden relative z-30 flex flex-col items-center justify-center text-center px-4 my-auto">
+            <div class="bg-slate-900/90 border border-slate-600/80 backdrop-blur-md p-6 sm:p-8 rounded-3xl max-w-lg shadow-2xl">
+                <div class="inline-block px-3 py-1 mb-3 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-bold">
+                    🥊 실시간 웹캠 펀치 & 전신 트래킹 격투
+                </div>
+                <h2 class="font-arcade text-3xl sm:text-5xl text-white mb-3 tracking-wide">
+                    GET READY FOR THE NEXT BATTLE!
+                </h2>
+                <p class="text-slate-300 text-sm sm:text-base mb-6 leading-relaxed">
+                    카메라 앞에서 <strong>몸을 좌우로 움직이면 이동</strong>하고, <strong>위로 점프하면 점프</strong>합니다!<br>
+                    <strong>왼손(왼쪽)</strong> / <strong>오른손(오른쪽)</strong>으로 주먹을 내지르면 철벽 가드 AI와 격돌합니다.<br>
+                    <span class="text-xs text-slate-400">(키보드: [←][→] 이동, [↑] 점프, [Z] 왼손, [X] 오른손, [C] 가드)</span>
+                </p>
+
+                <!-- 민감도 조절 슬라이더 -->
+                <div class="mb-6 bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700 text-left">
+                    <div class="flex justify-between text-xs font-bold mb-1.5">
+                        <span class="text-cyan-300">펀치 인식 민감도</span>
+                        <span id="sensitivityValue" class="text-amber-300">보통 (35)</span>
+                    </div>
+                    <input id="sensitivitySlider" type="range" min="15" max="65" value="35" class="w-full accent-cyan-400 cursor-pointer">
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button id="startWithCamBtn" class="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 font-arcade text-lg text-white shadow-lg shadow-blue-600/40 active:scale-95 transition cursor-pointer">
+                        📷 카메라 켜고 대결 시작
+                    </button>
+                    <button id="startNoCamBtn" class="px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-600 font-bold text-sm text-slate-200 active:scale-95 transition cursor-pointer">
+                        ⌨️ 키보드 모드로 바로 시작
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- KO / 승패 결과 배너 -->
+        <div id="koBanner" class="hidden relative z-30 flex flex-col items-center justify-center text-center px-4 my-auto">
+            <div class="bg-slate-950/90 border-2 border-amber-400 p-6 sm:p-8 rounded-3xl shadow-2xl backdrop-blur-md">
+                <h2 id="koTitle" class="font-arcade text-5xl sm:text-7xl text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 via-amber-500 to-red-600 drop-shadow">
+                    K.O.!
+                </h2>
+                <p id="koSubtitle" class="font-arcade text-2xl sm:text-4xl text-white mt-2 mb-6">
+                    YOU WIN!
+                </p>
+                <button id="restartBtn" class="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-red-600 hover:from-amber-400 hover:to-red-500 font-arcade text-xl text-white shadow-lg active:scale-95 transition cursor-pointer">
+                    🔄 다시 대결하기 (REMATCH)
+                </button>
+            </div>
+        </div>
+
+        <!-- 우측 하단 카메라 PIP (모션 인식 모니터) -->
+        <div class="relative z-20 self-end m-3 sm:m-4 w-44 sm:w-64 rounded-2xl overflow-hidden border-2 border-cyan-400/70 bg-slate-950/90 shadow-2xl">
+            <div class="relative aspect-video bg-slate-900 flex items-center justify-center">
+                <!-- 실제 웹캠 비디오 -->
+                <video id="webcamVideo" autoplay playsinline muted class="hidden w-full h-full object-cover mirror-video"></video>
+                <!-- 모션 감지 구역 및 이펙트 오버레이 -->
+                <canvas id="motionOverlayCanvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+
+                <!-- 카메라 꺼져있을 때 안내 -->
+                <div id="camPlaceholder" class="text-center p-2">
+                    <div class="text-2xl mb-1">📷</div>
+                    <p class="text-[11px] text-slate-400 leading-tight">카메라가 꺼져 있습니다.<br>상단 버튼을 눌러 켜세요.</p>
+                </div>
+            </div>
+            <!-- 왼손 / 오른손 감지 게이지 바 & 위치 상태 -->
+            <div class="grid grid-cols-2 gap-1 p-1.5 bg-slate-900 border-t border-slate-800 text-[10px] font-bold">
+                <div>
+                    <div class="flex justify-between text-cyan-300 mb-0.5">
+                        <span>왼손 잽(LEFT)</span>
+                        <span id="leftPowerTxt">0%</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div id="leftMotionBar" class="h-full bg-cyan-400 transition-all duration-75" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between text-amber-300 mb-0.5">
+                        <span>오른손 훅(RIGHT)</span>
+                        <span id="rightPowerTxt">0%</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div id="rightMotionBar" class="h-full bg-amber-400 transition-all duration-75" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="px-2 py-1 bg-slate-950 border-t border-slate-800/80 flex justify-between items-center text-[10px] text-emerald-300 font-bold">
+                <span>🧍 위치/점프 트래킹:</span>
+                <span id="bodyPosBadge">중앙 대기 (지상)</span>
+            </div>
+        </div>
+    </main>
+
+    <!-- 하단 컨트롤 패널 (터치/마우스/키보드 안내 및 수동 버튼) -->
+    <footer class="w-full max-w-6xl grid grid-cols-1 md:grid-cols-3 gap-2.5 items-center bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
+        <!-- 조작 안내 -->
+        <div class="text-xs text-slate-400 space-y-1">
+            <div class="font-bold text-slate-200 flex items-center gap-1.5">
+                <span>🎮 조작 가이드 (모션 & 키보드)</span>
+            </div>
+            <p>• <span class="text-emerald-400 font-bold">이동/점프</span>: 몸 좌우 이동 / 위로 점프 (키보드 <kbd class="px-1 bg-slate-800 rounded border border-slate-600 text-white">←</kbd><kbd class="px-1 bg-slate-800 rounded border border-slate-600 text-white">→</kbd><kbd class="px-1 bg-slate-800 rounded border border-slate-600 text-white">↑</kbd>)</p>
+            <p>• <span class="text-cyan-400 font-bold">공격/방어</span>: 좌/우 주먹 지르기 (<kbd class="px-1 bg-slate-800 rounded border border-slate-600 text-white">Z</kbd> 잽 / <kbd class="px-1 bg-slate-800 rounded border border-slate-600 text-white">X</kbd> 스트레이트 / <kbd class="px-1 bg-slate-800 rounded border border-slate-600 text-white">C</kbd> 가드)</p>
+        </div>
+
+        <!-- 터치/클릭 액션 버튼 -->
+        <div class="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
+            <button id="btnMoveLeft" class="py-2.5 px-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 rounded-xl font-bold text-xs text-slate-200 border border-slate-600 cursor-pointer">
+                ◀
+            </button>
+            <button id="btnJump" class="py-2.5 px-2.5 bg-emerald-800/80 hover:bg-emerald-700 active:scale-95 rounded-xl font-bold text-xs text-emerald-200 border border-emerald-500/40 cursor-pointer">
+                ▲ 점프
+            </button>
+            <button id="btnMoveRight" class="py-2.5 px-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 rounded-xl font-bold text-xs text-slate-200 border border-slate-600 cursor-pointer">
+                ▶
+            </button>
+            <button id="btnLeftPunch" class="py-2.5 px-2.5 bg-gradient-to-b from-cyan-500 to-blue-700 hover:from-cyan-400 hover:to-blue-600 active:scale-95 rounded-xl font-arcade text-sm sm:text-base text-white shadow-lg shadow-blue-600/30 border border-cyan-300/40 cursor-pointer">
+                👊 잽(Z)
+            </button>
+            <button id="btnRightPunch" class="py-2.5 px-2.5 bg-gradient-to-b from-amber-500 to-red-700 hover:from-amber-400 hover:to-red-600 active:scale-95 rounded-xl font-arcade text-sm sm:text-base text-white shadow-lg shadow-red-600/30 border border-amber-300/40 cursor-pointer">
+                💥 강타(X)
+            </button>
+            <button id="btnGuard" class="py-2.5 px-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 rounded-xl font-bold text-xs text-emerald-300 border border-emerald-500/40 cursor-pointer">
+                🛡️(C)
+            </button>
+        </div>
+
+        <!-- 민감도 빠른 조절 -->
+        <div class="flex flex-col justify-center bg-slate-950/70 px-3 py-2 rounded-xl border border-slate-800">
+            <div class="flex justify-between text-[11px] font-bold mb-1">
+                <span class="text-slate-300">펀치 민감도 (낮을수록 예민)</span>
+                <span id="quickSensLabel" class="text-cyan-400">35</span>
+            </div>
+            <input id="quickSensitivity" type="range" min="15" max="65" value="35" class="w-full accent-cyan-400 cursor-pointer">
+        </div>
+    </footer>
+
+    <!-- 커스텀 알림 토스트 (alert 대체용) -->
+    <div id="toastMsg" class="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl bg-slate-900/95 border border-amber-400/60 text-white text-sm font-bold shadow-2xl opacity-0 pointer-events-none transition-opacity duration-300">
+    </div>
+
+    <script>
+        /**
+         * MOTION TEKKEN - 웹캠 실시간 모션 인식 1:1 격투 게임
+         * 기능:
+         * 1. HTML5 getUserMedia 웹캠 스트리밍 및 픽셀 프레임 차분(Frame Differencing) 모션 인식
+         * 2. 왼쪽/오른쪽 주먹 지르기 감지 및 전신 좌우 이동 + 점프 인식
+         * 3. 2.5D 아케이드 링 렌더링, 타격 이펙트, 역경직(Hit-stop), 콤보 시스템
+         * 4. 초고수 철권 AI (반사신경 가드, 가드 후 확정 반격, 원투 콤보, 대공 점프)
+         * 5. Web Audio API를 이용한 타격 사운드 합성
+         */
+
+        // --- DOM 요소 참조 ---
+        const fightCanvas = document.getElementById('fightCanvas');
+        const ctx = fightCanvas.getContext('2d');
+        const gameStageContainer = document.getElementById('gameStageContainer');
+
+        const webcamVideo = document.getElementById('webcamVideo');
+        const motionOverlayCanvas = document.getElementById('motionOverlayCanvas');
+        const motionCtx = motionOverlayCanvas.getContext('2d');
+        const camPlaceholder = document.getElementById('camPlaceholder');
+
+        // 오프스크린 모션 분석용 캔버스 (저해상도 처리로 60fps 성능 확보)
+        const procCanvas = document.createElement('canvas');
+        procCanvas.width = 160;
+        procCanvas.height = 120;
+        const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+
+        // UI 요소
+        const toggleCamBtn = document.getElementById('toggleCamBtn');
+        const camStatusDot = document.getElementById('camStatusDot');
+        const camStatusText = document.getElementById('camStatusText');
+        const centerOverlay = document.getElementById('centerOverlay');
+        const koBanner = document.getElementById('koBanner');
+        const koTitle = document.getElementById('koTitle');
+        const koSubtitle = document.getElementById('koSubtitle');
+
+        const p1HpBar = document.getElementById('p1HpBar');
+        const p1HpText = document.getElementById('p1HpText');
+        const aiHpBar = document.getElementById('aiHpBar');
+        const aiHpText = document.getElementById('aiHpText');
+        const timerText = document.getElementById('timerText');
+        const p1ComboBox = document.getElementById('p1ComboBox');
+        const p1ComboCount = document.getElementById('p1ComboCount');
+        const aiStateBadge = document.getElementById('aiStateBadge');
+
+        const leftMotionBar = document.getElementById('leftMotionBar');
+        const rightMotionBar = document.getElementById('rightMotionBar');
+        const leftPowerTxt = document.getElementById('leftPowerTxt');
+        const rightPowerTxt = document.getElementById('rightPowerTxt');
+        const bodyPosBadge = document.getElementById('bodyPosBadge');
+
+        const sensitivitySlider = document.getElementById('sensitivitySlider');
+        const sensitivityValue = document.getElementById('sensitivityValue');
+        const quickSensitivity = document.getElementById('quickSensitivity');
+        const quickSensLabel = document.getElementById('quickSensLabel');
+
+        // --- 웹 오디오 API 기반 아케이드 타격음 합성기 ---
+        const SoundFX = {
+            ctx: null,
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            },
+            playPunch(isHeavy = false) {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(isHeavy ? 180 : 260, now);
+                osc.frequency.exponentialRampToValueAtTime(45, now + 0.12);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.13);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.13);
+            },
+            playHit(isHeavy = false) {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = isHeavy ? 'sawtooth' : 'square';
+                osc.frequency.setValueAtTime(isHeavy ? 140 : 190, now);
+                osc.frequency.exponentialRampToValueAtTime(30, now + (isHeavy ? 0.22 : 0.14));
+                gain.gain.setValueAtTime(isHeavy ? 0.45 : 0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + (isHeavy ? 0.24 : 0.15));
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + (isHeavy ? 0.24 : 0.15));
+            },
+            playGuard() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(520, now);
+                osc.frequency.exponentialRampToValueAtTime(220, now + 0.1);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.11);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.11);
+            },
+            playJump() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(160, now);
+                osc.frequency.exponentialRampToValueAtTime(380, now + 0.14);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.15);
+            },
+            playKO() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(220, now);
+                osc.frequency.linearRampToValueAtTime(55, now + 0.7);
+                gain.gain.setValueAtTime(0.45, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.75);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.75);
+            }
+        };
+
+        // --- 커스텀 토스트 알림 ---
+        function showToast(msg) {
+            const toast = document.getElementById('toastMsg');
+            toast.textContent = msg;
+            toast.classList.remove('opacity-0');
+            clearTimeout(toast._timer);
+            toast._timer = setTimeout(() => {
+                toast.classList.add('opacity-0');
+            }, 3000);
+        }
+
+        // --- 게임 상태 관리 ---
+        const gameState = {
+            isRunning: false,
+            isGameOver: false,
+            timeLeft: 60,
+            lastTimerTick: 0,
+            cameraActive: false,
+            prevFrameData: null,
+            sensitivity: 35, // 낮을수록 민감함
+            leftCooldown: 0,
+            rightCooldown: 0,
+            jumpCooldown: 0,
+            particles: [],
+            floatingTexts: [],
+            hitStopFrames: 0, // 철권 특유의 타격 역경직(Hit-stop)
+            flashAlpha: 0,
+            keys: { ArrowLeft: false, ArrowRight: false }
+        };
+
+        // --- 파이터 클래스 (플레이어 & AI 공통) ---
+        class Fighter {
+            constructor({ name, isPlayer, x, primaryColor, secondaryColor, gloveColor }) {
+                this.name = name;
+                this.isPlayer = isPlayer;
+                this.baseX = x;
+                this.x = x;
+                this.targetX = x; // 카메라 위치 추적 목표 X좌표
+                this.y = 0; // 지면 기준 높이 (점프 시 음수값으로 위로 상승)
+                this.vy = 0; // 수직 속도
+                this.isGrounded = true;
+
+                this.hp = 100;
+                this.maxHp = 100;
+
+                this.primaryColor = primaryColor;
+                this.secondaryColor = secondaryColor;
+                this.gloveColor = gloveColor;
+
+                // 애니메이션 & 액션 상태
+                this.state = 'IDLE'; // IDLE, LEFT_PUNCH, RIGHT_PUNCH, GUARD, HIT, KO
+                this.stateTimer = 0;
+                this.punchProgress = 0; // 0 ~ 1
+                this.activeHand = null; // 'LEFT' | 'RIGHT'
+                this.hasDealtDamageThisSwing = false;
+
+                this.combo = 0;
+                this.comboResetTimer = 0;
+                this.breathPhase = isPlayer ? 0 : Math.PI;
+
+                // 초고수 AI 전용 뇌 변수
+                this.aiDecisionTimer = 25;
+                this.aiTargetOffset = 0;
+                this.aiComboQueue = []; // 연속 콤보(원투, 3단 콤보) 대기열
+                this.aiGuardedPlayerHit = false; // 방어 성공 후 즉시 반격(딜캐) 플래그
+                this.aiReflexCooldown = 0;
+            }
+
+            reset(x) {
+                this.baseX = x;
+                this.x = x;
+                this.targetX = x;
+                this.y = 0;
+                this.vy = 0;
+                this.isGrounded = true;
+                this.hp = 100;
+                this.state = 'IDLE';
+                this.stateTimer = 0;
+                this.punchProgress = 0;
+                this.activeHand = null;
+                this.combo = 0;
+                this.aiDecisionTimer = 25;
+                this.aiComboQueue = [];
+                this.aiGuardedPlayerHit = false;
+                this.aiReflexCooldown = 0;
+            }
+
+            jump() {
+                if (this.state === 'KO' || this.state === 'HIT') return;
+                if (this.isGrounded) {
+                    this.vy = -17.5;
+                    this.isGrounded = false;
+                    if (this.isPlayer) SoundFX.playJump();
+                    spawnParticles(this.x, getGroundY() - 5, '#94a3b8', 8);
+                }
+            }
+
+            moveHorizontal(deltaX, stageWidth) {
+                if (this.state === 'KO' || this.state === 'HIT') return;
+                const margin = Math.max(65, stageWidth * 0.1);
+                this.x = Math.max(margin, Math.min(stageWidth - margin, this.x + deltaX));
+                this.targetX = this.x;
+            }
+
+            startPunch(hand) {
+                if (this.state === 'KO' || this.state === 'HIT') return;
+                // 이미 펀치 중일 때 반대손이면 캔슬 콤보 허용 (더 빠릿한 조작감)
+                if ((this.state === 'LEFT_PUNCH' || this.state === 'RIGHT_PUNCH') && this.punchProgress < 0.55) {
+                    return;
+                }
+
+                this.state = hand === 'LEFT' ? 'LEFT_PUNCH' : 'RIGHT_PUNCH';
+                this.activeHand = hand;
+                this.stateTimer = hand === 'LEFT' ? 16 : 23; // 왼손은 빠르고, 오른손은 묵직함
+                this.punchProgress = 0;
+                this.hasDealtDamageThisSwing = false;
+
+                SoundFX.playPunch(hand === 'RIGHT');
+            }
+
+            startGuard(duration = 28) {
+                if (this.state === 'KO' || this.state === 'HIT') return;
+                if (this.state === 'LEFT_PUNCH' || this.state === 'RIGHT_PUNCH') return;
+                this.state = 'GUARD';
+                this.stateTimer = duration;
+            }
+
+            takeDamage(amount, isHeavy, attacker) {
+                if (this.state === 'KO') return;
+
+                // 가드(방어) 중일 경우 데미지 대폭 경감 + AI는 즉시 반격 기회 포착!
+                if (this.state === 'GUARD') {
+                    const chipDamage = Math.max(1, Math.round(amount * 0.12));
+                    this.hp = Math.max(0, this.hp - chipDamage);
+                    SoundFX.playGuard();
+                    spawnParticles(this.x + (this.isPlayer ? 25 : -25), getGroundY() + this.y - 105, '#38bdf8', 10);
+                    spawnFloatingText(this.x, getGroundY() + this.y - 165, 'GUARD!', '#38bdf8');
+                    // 가드 넉백
+                    this.x += this.isPlayer ? -12 : 12;
+                    this.targetX = this.x;
+
+                    if (!this.isPlayer) {
+                        this.aiGuardedPlayerHit = true;
+                        this.aiDecisionTimer = 4; // 막자마자 초고속 반격 준비!
+                    }
+                    return;
+                }
+
+                // 정타 피격!
+                this.hp = Math.max(0, this.hp - amount);
+                this.state = 'HIT';
+                this.stateTimer = isHeavy ? 20 : 13;
+                this.combo = 0;
+                this.aiComboQueue = []; // 맞으면 콤보 끊김
+
+                // 공격자 콤보 증가
+                attacker.combo += 1;
+                attacker.comboResetTimer = 110;
+
+                // 역경직 & 화면 흔들림
+                gameState.hitStopFrames = isHeavy ? 5 : 2;
+                gameState.flashAlpha = isHeavy ? 0.32 : 0.14;
+                triggerScreenShake();
+
+                SoundFX.playHit(isHeavy);
+
+                // 타격 이펙트 및 데미지 텍스트
+                const hitX = this.x + (this.isPlayer ? 20 : -20);
+                const hitY = getGroundY() + this.y - 110;
+                spawnParticles(hitX, hitY, isHeavy ? '#facc15' : '#fb7185', isHeavy ? 24 : 14);
+                spawnFloatingText(
+                    this.x,
+                    getGroundY() + this.y - 175,
+                    isHeavy ? `CRITICAL -${amount}!` : `-${amount}`,
+                    isHeavy ? '#facc15' : '#f87171'
+                );
+
+                // 피격 넉백
+                const knockback = isHeavy ? 28 : 14;
+                this.x += this.isPlayer ? -knockback : knockback;
+                this.targetX = this.x;
+
+                if (this.hp <= 0) {
+                    this.hp = 0;
+                    this.state = 'KO';
+                    this.vy = -10;
+                    this.isGrounded = false;
+                    endBattle(attacker.isPlayer);
+                }
+            }
+
+            update(opponent, stageWidth) {
+                this.breathPhase += 0.08;
+
+                // 중력 및 점프 물리 연산
+                if (!this.isGrounded || this.y < 0) {
+                    this.y += this.vy;
+                    this.vy += 0.92; // 중력 가속도
+                    if (this.y >= 0) {
+                        this.y = 0;
+                        this.vy = 0;
+                        this.isGrounded = true;
+                        if (this.state !== 'KO') {
+                            spawnParticles(this.x, getGroundY(), '#64748b', 6);
+                        }
+                    }
+                }
+
+                // 콤보 타이머 감소
+                if (this.comboResetTimer > 0) {
+                    this.comboResetTimer--;
+                    if (this.comboResetTimer === 0) this.combo = 0;
+                }
+
+                // 링 경계선 클램핑
+                const margin = Math.max(65, stageWidth * 0.1);
+                this.x = Math.max(margin, Math.min(stageWidth - margin, this.x));
+
+                // 플레이어 이동 처리 (키보드 + 카메라 추적 부드러운 보간)
+                if (this.isPlayer && this.state !== 'KO' && this.state !== 'HIT') {
+                    const moveSpeed = 6.5;
+                    if (gameState.keys.ArrowLeft) {
+                        this.moveHorizontal(-moveSpeed, stageWidth);
+                    }
+                    if (gameState.keys.ArrowRight) {
+                        this.moveHorizontal(moveSpeed, stageWidth);
+                    }
+                    // 카메라가 활성화되어 있고 키보드를 누르지 않을 때 목표 위치로 부드럽게 이동
+                    if (gameState.cameraActive && !gameState.keys.ArrowLeft && !gameState.keys.ArrowRight) {
+                        const clampedTarget = Math.max(margin, Math.min(stageWidth - margin, this.targetX));
+                        this.x += (clampedTarget - this.x) * 0.16;
+                    }
+                }
+
+                // 캐릭터끼리 겹치지 않도록 최소 간격 유지 (지상에 함께 있을 때)
+                const minSep = 78;
+                if (Math.abs(this.x - opponent.x) < minSep && Math.abs(this.y - opponent.y) < 55) {
+                    const push = (minSep - Math.abs(this.x - opponent.x)) * 0.5;
+                    if (this.x < opponent.x) {
+                        this.x -= push;
+                    } else {
+                        this.x += push;
+                    }
+                }
+
+                // 상태 타이머 처리
+                if (this.state === 'LEFT_PUNCH' || this.state === 'RIGHT_PUNCH') {
+                    const totalDuration = this.activeHand === 'LEFT' ? 16 : 23;
+                    this.stateTimer--;
+                    this.punchProgress = 1 - (this.stateTimer / totalDuration);
+
+                    // 펀치 타격 판정 구간 (뻗는 순간: 0.35 ~ 0.68)
+                    if (this.punchProgress >= 0.35 && this.punchProgress <= 0.68 && !this.hasDealtDamageThisSwing) {
+                        const reach = this.activeHand === 'LEFT' ? 138 : 158;
+                        const horizontalDist = Math.abs(this.x - opponent.x);
+                        const verticalDist = Math.abs(this.y - opponent.y);
+                        if (horizontalDist <= reach && verticalDist <= 75) {
+                            this.hasDealtDamageThisSwing = true;
+                            const isHeavy = this.activeHand === 'RIGHT';
+                            // 공중 펀치 보너스 데미지!
+                            const airBonus = !this.isGrounded ? 3 : 0;
+                            const dmg = (isHeavy ? 14 : 8) + airBonus;
+                            opponent.takeDamage(dmg, isHeavy, this);
+                        }
+                    }
+
+                    if (this.stateTimer <= 0) {
+                        this.state = 'IDLE';
+                        this.punchProgress = 0;
+                        this.activeHand = null;
+                    }
+                } else if (this.state === 'GUARD' || this.state === 'HIT') {
+                    this.stateTimer--;
+                    if (this.stateTimer <= 0) {
+                        this.state = 'IDLE';
+                    }
+                }
+
+                // 초고수 CPU AI 두뇌 업데이트
+                if (!this.isPlayer && this.state !== 'KO') {
+                    this.updateMasterAI(opponent, stageWidth);
+                }
+            }
+
+            /**
+             * 초고수 철권 AI 알고리즘:
+             * 1. 초고속 반사신경 가드: 플레이어가 펀치를 날리면 사정거리 내일 때 82% 확률로 즉시 철벽 가드!
+             * 2. 딜레이 캐치(확정 반격): 플레이어의 공격을 막아낸 직후 빈틈을 노려 왼손-오른손 원투 콤보 작렬!
+             * 3. 거리 조절 및 압박 스텝: 사정거리 밖이면 빠르게 전진 스텝, 너무 붙으면 백스텝 후 카운터.
+             * 4. 대공 점프 및 공중 콤보: 플레이어가 점프하면 같이 점프해 공중전을 펼치거나 착지 타이밍을 노림.
+             */
+            updateMasterAI(player, stageWidth) {
+                if (this.aiReflexCooldown > 0) this.aiReflexCooldown--;
+
+                const dist = Math.abs(this.x - player.x);
+                const attackRange = 142;
+
+                // [1] 실시간 반사신경 방어 (플레이어 공격 감지 시 즉시 가드!)
+                if ((player.state === 'LEFT_PUNCH' || player.state === 'RIGHT_PUNCH') &&
+                    player.punchProgress < 0.35 &&
+                    dist <= 165 &&
+                    this.state === 'IDLE' &&
+                    this.aiReflexCooldown === 0) {
+                    
+                    this.aiReflexCooldown = 14;
+                    if (Math.random() < 0.82) { // 82% 확률로 철벽 가드!
+                        this.startGuard(24);
+                        aiStateBadge.textContent = '🛡️ MASTER AI: 철벽 가드!';
+                        return;
+                    } else if (this.isGrounded && Math.random() < 0.45) {
+                        // 가끔 백스텝으로 회피 후 반격
+                        this.moveHorizontal(42, stageWidth);
+                        aiStateBadge.textContent = '💨 MASTER AI: 백스텝 회피!';
+                        return;
+                    }
+                }
+
+                // [2] 연속 콤보 큐 실행 (원투 콤보 / 3연타 콤보)
+                if (this.aiComboQueue.length > 0 && this.state === 'IDLE') {
+                    const nextMove = this.aiComboQueue.shift();
+                    if (dist <= attackRange + 15) {
+                        this.startPunch(nextMove);
+                        aiStateBadge.textContent = nextMove === 'RIGHT' ? '💥 MASTER AI: 마무리 강타!' : '⚡ MASTER AI: 연속 콤보!';
+                    } else {
+                        this.aiComboQueue = [];
+                    }
+                    return;
+                }
+
+                // [3] 능동적 간격 조절 (거리 좁히기 / 거리 벌리기)
+                if (this.state === 'IDLE' || this.state === 'GUARD') {
+                    if (dist > attackRange - 12) {
+                        // 사정거리 밖이면 공격적으로 빠르게 전진
+                        const approachSpeed = dist > 240 ? -6.2 : -4.4;
+                        this.moveHorizontal(approachSpeed, stageWidth);
+                    } else if (dist < 82 && Math.random() < 0.08) {
+                        // 너무 초근접하면 살짝 뒤로 빠져서 헛치게 유도
+                        this.moveHorizontal(18, stageWidth);
+                    }
+                }
+
+                // [4] 전술 판단 타이머
+                this.aiDecisionTimer--;
+                if (this.aiDecisionTimer > 0) return;
+
+                // 가드 직후 반격(딜캐) 우선 실행!
+                if (this.aiGuardedPlayerHit && this.state === 'IDLE') {
+                    this.aiGuardedPlayerHit = false;
+                    if (dist <= attackRange + 12) {
+                        this.startPunch('LEFT');
+                        this.aiComboQueue = ['RIGHT']; // 왼손-오른손 확정 원투 반격!
+                        aiStateBadge.textContent = '🔥 MASTER AI: 가드 후 확정 반격!';
+                        this.aiDecisionTimer = 26;
+                        return;
+                    }
+                }
+
+                // 플레이어가 점프했을 때 대공 대응
+                if (!player.isGrounded && this.isGrounded && dist < 190 && Math.random() < 0.65) {
+                    this.jump();
+                    this.aiComboQueue = ['RIGHT'];
+                    aiStateBadge.textContent = '🦅 MASTER AI: 대공 요격 점프!';
+                    this.aiDecisionTimer = 28;
+                    return;
+                }
+
+                // 사정거리 내 전술 선택
+                if (dist <= attackRange + 10) {
+                    const roll = Math.random();
+                    if (roll < 0.36) {
+                        // 1) 정석 원투 콤보 (잽 -> 스트레이트)
+                        this.startPunch('LEFT');
+                        this.aiComboQueue = ['RIGHT'];
+                        aiStateBadge.textContent = '🥊 MASTER AI: 원투 콤보 러시';
+                        this.aiDecisionTimer = 30;
+                    } else if (roll < 0.56) {
+                        // 2) 3연타 맹공 (잽 -> 잽 -> 오른손 강타)
+                        this.startPunch('LEFT');
+                        this.aiComboQueue = ['LEFT', 'RIGHT'];
+                        aiStateBadge.textContent = '🔥 MASTER AI: 3연타 맹공!';
+                        this.aiDecisionTimer = 38;
+                    } else if (roll < 0.74) {
+                        // 3) 묵직한 단발 카운터 스트레이트
+                        this.startPunch('RIGHT');
+                        aiStateBadge.textContent = '💥 MASTER AI: 기습 스트레이트';
+                        this.aiDecisionTimer = 24;
+                    } else {
+                        // 4) 선제 가드 심리전 (플레이어 반격 유도)
+                        this.startGuard(26);
+                        aiStateBadge.textContent = '🛡️ MASTER AI: 철통 방어 태세';
+                        this.aiDecisionTimer = 24;
+                    }
+                } else {
+                    // 거리가 멀 때 대시 접근 또는 페인트 동작
+                    if (Math.random() < 0.35 && this.isGrounded) {
+                        this.moveHorizontal(-45, stageWidth); // 전진 대시!
+                        aiStateBadge.textContent = '⚡ MASTER AI: 고속 전진 스텝!';
+                    } else {
+                        aiStateBadge.textContent = '👀 MASTER AI: 거리 압박 중';
+                    }
+                    this.aiDecisionTimer = 18;
+                }
+            }
+        }
+
+        // 플레이어 및 AI 인스턴스 생성
+        const player = new Fighter({
+            name: 'PLAYER',
+            isPlayer: true,
+            x: 260,
+            primaryColor: '#2563eb',
+            secondaryColor: '#38bdf8',
+            gloveColor: '#06b6d4'
+        });
+
+        const ai = new Fighter({
+            name: 'MASTER AI',
+            isPlayer: false,
+            x: 560,
+            primaryColor: '#dc2626',
+            secondaryColor: '#f59e0b',
+            gloveColor: '#ef4444'
+        });
+
+        // --- 유틸리티 및 이펙트 함수 ---
+        function getGroundY() {
+            return fightCanvas.height * 0.84;
+        }
+
+        function triggerScreenShake() {
+            gameStageContainer.classList.remove('shake-active');
+            void gameStageContainer.offsetWidth; // 리플로우 강제
+            gameStageContainer.classList.add('shake-active');
+        }
+
+        function spawnParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 2 + Math.random() * 8;
+                gameState.particles.push({
+                    x,
+                    y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 2,
+                    size: 2.5 + Math.random() * 4.5,
+                    color,
+                    life: 18 + Math.random() * 14,
+                    maxLife: 32
+                });
+            }
+        }
+
+        function spawnFloatingText(x, y, text, color) {
+            gameState.floatingTexts.push({
+                x,
+                y,
+                vy: -1.6,
+                text,
+                color,
+                life: 38,
+                maxLife: 38
+            });
+        }
+
+        // --- 캔버스 반응형 리사이즈 ---
+        function resizeCanvas() {
+            const rect = fightCanvas.getBoundingClientRect();
+            fightCanvas.width = rect.width;
+            fightCanvas.height = rect.height;
+
+            // 캐릭터 위치 비율 유지
+            if (!gameState.isRunning) {
+                player.x = fightCanvas.width * 0.32;
+                player.targetX = player.x;
+                ai.x = fightCanvas.width * 0.68;
+                ai.targetX = ai.x;
+            }
+        }
+
+        // --- 웹캠 초기화 및 종료 ---
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 320, height: 240, facingMode: 'user' },
+                    audio: false
+                });
+                webcamVideo.srcObject = stream;
+                await webcamVideo.play();
+
+                webcamVideo.classList.remove('hidden');
+                camPlaceholder.classList.add('hidden');
+                gameState.cameraActive = true;
+                gameState.prevFrameData = null;
+
+                camStatusDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+                camStatusText.textContent = '모션 인식 활성';
+                toggleCamBtn.textContent = '⏹️ 카메라 끄기';
+                toggleCamBtn.className = 'px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 transition font-bold text-xs sm:text-sm text-white shadow-lg cursor-pointer';
+
+                showToast('📷 카메라 연결 완료! 주먹을 뻗고 좌우 이동/점프를 해보세요!');
+            } catch (err) {
+                console.warn('카메라 접근 실패:', err);
+                showToast('⚠️ 카메라 권한이 없거나 연결할 수 없습니다. 키보드(방향키, Z/X/C)로 플레이하세요!');
+            }
+        }
+
+        function stopCamera() {
+            if (webcamVideo.srcObject) {
+                webcamVideo.srcObject.getTracks().forEach(track => track.stop());
+                webcamVideo.srcObject = null;
+            }
+            webcamVideo.classList.add('hidden');
+            camPlaceholder.classList.remove('hidden');
+            gameState.cameraActive = false;
+            gameState.prevFrameData = null;
+
+            camStatusDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+            camStatusText.textContent = '카메라 꺼짐';
+            toggleCamBtn.textContent = '📷 카메라 켜기';
+            toggleCamBtn.className = 'px-3.5 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 transition font-bold text-xs sm:text-sm text-white shadow-lg cursor-pointer';
+            motionCtx.clearRect(0, 0, motionOverlayCanvas.width, motionOverlayCanvas.height);
+        }
+
+        // --- 카메라 모션 감지 엔진 (주먹 지르기 + 좌우 이동 + 점프 인식) ---
+        function processCameraMotion() {
+            if (!gameState.cameraActive || webcamVideo.readyState < 2) return;
+
+            const w = procCanvas.width;   // 160
+            const h = procCanvas.height;  // 120
+
+            // 좌우 반전하여 오프스크린 캔버스에 그리기
+            procCtx.save();
+            procCtx.translate(w, 0);
+            procCtx.scale(-1, 1);
+            procCtx.drawImage(webcamVideo, 0, 0, w, h);
+            procCtx.restore();
+
+            const currentFrame = procCtx.getImageData(0, 0, w, h);
+            const data = currentFrame.data;
+
+            // PIP 오버레이 캔버스 크기 동기화
+            if (motionOverlayCanvas.width !== motionOverlayCanvas.clientWidth ||
+                motionOverlayCanvas.height !== motionOverlayCanvas.clientHeight) {
+                motionOverlayCanvas.width = motionOverlayCanvas.clientWidth;
+                motionOverlayCanvas.height = motionOverlayCanvas.clientHeight;
+            }
+            const ow = motionOverlayCanvas.width;
+            const oh = motionOverlayCanvas.height;
+            motionCtx.clearRect(0, 0, ow, oh);
+
+            // 상단 점프 인식 라인 표시 (화면 상단 26% 영역)
+            const jumpLineY = oh * 0.26;
+            motionCtx.strokeStyle = 'rgba(52, 211, 153, 0.55)';
+            motionCtx.setLineDash([3, 3]);
+            motionCtx.lineWidth = 1.5;
+            motionCtx.beginPath();
+            motionCtx.moveTo(0, jumpLineY);
+            motionCtx.lineTo(ow, jumpLineY);
+            motionCtx.stroke();
+
+            // 중앙 분할선 표시 (왼손 존 / 오른손 존)
+            motionCtx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+            motionCtx.setLineDash([4, 4]);
+            motionCtx.lineWidth = 1;
+            motionCtx.beginPath();
+            motionCtx.moveTo(ow / 2, 0);
+            motionCtx.lineTo(ow / 2, oh);
+            motionCtx.stroke();
+            motionCtx.setLineDash([]);
+
+            if (gameState.prevFrameData) {
+                const prev = gameState.prevFrameData;
+                let leftMotionPixels = 0;
+                let rightMotionPixels = 0;
+                let leftSumX = 0, leftSumY = 0;
+                let rightSumX = 0, rightSumY = 0;
+
+                // 전신 움직임 질량 중심 추적용 변수 (좌우 이동 & 점프 인식)
+                let totalMotionPixels = 0;
+                let totalSumX = 0;
+                let totalSumY = 0;
+                let topJumpPixels = 0;
+
+                const pixelDiffThreshold = 28; // 픽셀당 밝기 변화 임계값
+                const halfW = w / 2;
+                const jumpZoneH = h * 0.26;
+
+                // 성능을 위해 2픽셀 간격으로 샘플링
+                for (let y = 0; y < h; y += 2) {
+                    for (let x = 0; x < w; x += 2) {
+                        const idx = (y * w + x) * 4;
+                        const rDiff = Math.abs(data[idx] - prev[idx]);
+                        const gDiff = Math.abs(data[idx + 1] - prev[idx + 1]);
+                        const bDiff = Math.abs(data[idx + 2] - prev[idx + 2]);
+                        const diff = (rDiff + gDiff + bDiff) / 3;
+
+                        if (diff > pixelDiffThreshold) {
+                            totalMotionPixels++;
+                            totalSumX += x;
+                            totalSumY += y;
+
+                            if (y < jumpZoneH) {
+                                topJumpPixels++;
+                            }
+
+                            if (x < halfW) {
+                                leftMotionPixels++;
+                                leftSumX += x;
+                                leftSumY += y;
+                            } else {
+                                rightMotionPixels++;
+                                rightSumX += x;
+                                rightSumY += y;
+                            }
+                        }
+                    }
+                }
+
+                // 움직임 강도를 0~100 스케일로 정규화
+                const leftIntensity = Math.min(100, Math.round((leftMotionPixels / 110) * 100));
+                const rightIntensity = Math.min(100, Math.round((rightMotionPixels / 110) * 100));
+
+                // PIP 게이지 UI 업데이트
+                leftMotionBar.style.width = `${leftIntensity}%`;
+                rightMotionBar.style.width = `${rightIntensity}%`;
+                leftPowerTxt.textContent = `${leftIntensity}%`;
+                rightPowerTxt.textContent = `${rightIntensity}%`;
+
+                // 1) 전신 좌우 이동 & 점프 인식
+                if (totalMotionPixels > 18) {
+                    const centerNormX = (totalSumX / totalMotionPixels) / w; // 0(맨 왼쪽) ~ 1(맨 오른쪽)
+                    const centerNormY = (totalSumY / totalMotionPixels) / h; // 0(맨 위) ~ 1(맨 아래)
+
+                    // 사용자의 좌우 위치를 게임 링 좌표(12% ~ 85%)로 매핑
+                    const clampedNormX = Math.max(0.12, Math.min(0.88, centerNormX));
+                    const mappedRatio = 0.12 + ((clampedNormX - 0.12) / 0.76) * 0.73;
+                    player.targetX = fightCanvas.width * mappedRatio;
+
+                    // PIP 오버레이에 사용자 위치 추적 마커 표시
+                    const markerX = centerNormX * ow;
+                    const markerY = centerNormY * oh;
+                    motionCtx.fillStyle = '#34d399';
+                    motionCtx.beginPath();
+                    motionCtx.arc(markerX, markerY, 5, 0, Math.PI * 2);
+                    motionCtx.fill();
+
+                    // 점프 판정: 상단 점프 구역에 충분한 움직임이 감지되거나 질량 중심이 높을 때
+                    if ((topJumpPixels > 24 || centerNormY < 0.30) && gameState.jumpCooldown === 0 && gameState.isRunning && !gameState.isGameOver) {
+                        gameState.jumpCooldown = 26;
+                        player.jump();
+                    }
+
+                    // 위치 배지 텍스트 업데이트
+                    const posLabel = centerNormX < 0.38 ? '왼쪽 이동' : (centerNormX > 0.62 ? '오른쪽 이동' : '중앙');
+                    const airLabel = !player.isGrounded ? '🚀 점프 중!' : '지상';
+                    bodyPosBadge.textContent = `${posLabel} (${airLabel})`;
+                }
+
+                // 2) 주먹 지르기 감지! (민감도 임계값 초과 + 쿨다운 0)
+                if (leftIntensity >= gameState.sensitivity && gameState.leftCooldown === 0) {
+                    gameState.leftCooldown = 16; // 중복 인식 방지 프레임
+                    if (gameState.isRunning && !gameState.isGameOver) {
+                        player.startPunch('LEFT');
+                    }
+                    // 오버레이에 타격 링 표시
+                    const cx = (leftSumX / Math.max(1, leftMotionPixels)) * (ow / w);
+                    const cy = (leftSumY / Math.max(1, leftMotionPixels)) * (oh / h);
+                    drawMotionBurst(motionCtx, cx, cy, '#22d3ee');
+                }
+
+                if (rightIntensity >= gameState.sensitivity && gameState.rightCooldown === 0) {
+                    gameState.rightCooldown = 20;
+                    if (gameState.isRunning && !gameState.isGameOver) {
+                        player.startPunch('RIGHT');
+                    }
+                    const cx = (rightSumX / Math.max(1, rightMotionPixels)) * (ow / w);
+                    const cy = (rightSumY / Math.max(1, rightMotionPixels)) * (oh / h);
+                    drawMotionBurst(motionCtx, cx, cy, '#fbbf24');
+                }
+            }
+
+            if (gameState.leftCooldown > 0) gameState.leftCooldown--;
+            if (gameState.rightCooldown > 0) gameState.rightCooldown--;
+            if (gameState.jumpCooldown > 0) gameState.jumpCooldown--;
+
+            // 현재 프레임 저장
+            gameState.prevFrameData = new Uint8ClampedArray(data);
+        }
+
+        function drawMotionBurst(c, x, y, color) {
+            c.save();
+            c.strokeStyle = color;
+            c.lineWidth = 3;
+            c.beginPath();
+            c.arc(x, y, 16, 0, Math.PI * 2);
+            c.stroke();
+            c.restore();
+        }
+
+        // --- 스테이지 배경 렌더링 (아케이드 격투 링) ---
+        function drawArenaBackground(w, h) {
+            const groundY = getGroundY();
+
+            // 밤하늘 & 네온 도장 배경 그라데이션
+            const bgGrad = ctx.createLinearGradient(0, 0, 0, groundY);
+            bgGrad.addColorStop(0, '#060913');
+            bgGrad.addColorStop(0.55, '#111b36');
+            bgGrad.addColorStop(1, '#1e1b4b');
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, 0, w, groundY);
+
+            // 배경 네온 기둥 & 스포트라이트
+            ctx.save();
+            const spotLeft = ctx.createRadialGradient(w * 0.25, 0, 10, w * 0.25, groundY * 0.7, w * 0.4);
+            spotLeft.addColorStop(0, 'rgba(56, 189, 248, 0.16)');
+            spotLeft.addColorStop(1, 'rgba(56, 189, 248, 0)');
+            ctx.fillStyle = spotLeft;
+            ctx.fillRect(0, 0, w, groundY);
+
+            const spotRight = ctx.createRadialGradient(w * 0.75, 0, 10, w * 0.75, groundY * 0.7, w * 0.4);
+            spotRight.addColorStop(0, 'rgba(244, 63, 94, 0.16)');
+            spotRight.addColorStop(1, 'rgba(244, 63, 94, 0)');
+            ctx.fillStyle = spotRight;
+            ctx.fillRect(0, 0, w, groundY);
+            ctx.restore();
+
+            // 원근감 있는 바닥 격투 매트
+            const floorGrad = ctx.createLinearGradient(0, groundY, 0, h);
+            floorGrad.addColorStop(0, '#1e293b');
+            floorGrad.addColorStop(1, '#090d16');
+            ctx.fillStyle = floorGrad;
+            ctx.fillRect(0, groundY, w, h - groundY);
+
+            // 링 바닥 원근 그리드 라인
+            ctx.strokeStyle = 'rgba(99, 102, 241, 0.25)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(0, groundY);
+            ctx.lineTo(w, groundY);
+            ctx.stroke();
+
+            const gridCols = 10;
+            for (let i = 0; i <= gridCols; i++) {
+                const topX = (w / gridCols) * i;
+                const botX = w / 2 + (topX - w / 2) * 1.45;
+                ctx.beginPath();
+                ctx.moveTo(topX, groundY);
+                ctx.lineTo(botX, h);
+                ctx.stroke();
+            }
+        }
+
+        // --- 파이터 캐릭터 렌더링 (관절 기반 2.5D 격투가) ---
+        function drawFighter(f) {
+            const groundY = getGroundY();
+            const dir = f.isPlayer ? 1 : -1; // 플레이어는 오른쪽(+), AI는 왼쪽(-) 바라봄
+            const bob = Math.sin(f.breathPhase) * 3.5;
+
+            ctx.save();
+            ctx.translate(f.x, groundY + f.y);
+
+            // 바닥 그림자 (점프 높이에 따라 크기/투명도 조절)
+            const jumpRatio = Math.max(0.35, 1 + f.y / 220);
+            ctx.save();
+            ctx.translate(0, -f.y);
+            ctx.fillStyle = `rgba(0, 0, 0, ${0.45 * jumpRatio})`;
+            ctx.beginPath();
+            ctx.ellipse(0, 4, 48 * jumpRatio, 12 * jumpRatio, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // KO 시 쓰러진 포즈
+            if (f.state === 'KO') {
+                ctx.rotate(-dir * (Math.PI / 2.2));
+                ctx.translate(0, -25);
+            } else if (f.state === 'HIT') {
+                // 피격 시 뒤로 젖혀짐
+                ctx.rotate(-dir * 0.22);
+            }
+
+            // 1. 다리 (격투 스탠스)
+            ctx.lineCap = 'round';
+            ctx.lineWidth = 16;
+            ctx.strokeStyle = '#0f172a';
+
+            // 뒷다리
+            ctx.beginPath();
+            ctx.moveTo(-12 * dir, -62 + bob);
+            ctx.lineTo(-26 * dir, -30);
+            ctx.lineTo(-32 * dir, -4);
+            ctx.stroke();
+
+            // 앞다리
+            ctx.beginPath();
+            ctx.moveTo(12 * dir, -62 + bob);
+            ctx.lineTo(26 * dir, -30);
+            ctx.lineTo(30 * dir, -4);
+            ctx.stroke();
+
+            // 부츠/발 보호대
+            ctx.fillStyle = f.secondaryColor;
+            ctx.beginPath();
+            ctx.roundRect(-42 * dir - (dir === 1 ? 0 : 18), -12, 22, 12, 5);
+            ctx.roundRect(22 * dir - (dir === 1 ? 0 : 18), -12, 22, 12, 5);
+            ctx.fill();
+
+            // 2. 몸통 (도복 상의 / 아머)
+            ctx.fillStyle = f.primaryColor;
+            ctx.beginPath();
+            ctx.roundRect(-24, -124 + bob, 48, 66, 14);
+            ctx.fill();
+
+            // 도복 띠 & V넥 포인트
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(-24, -70 + bob, 48, 9);
+            ctx.fillStyle = f.secondaryColor;
+            ctx.beginPath();
+            ctx.moveTo(-10, -124 + bob);
+            ctx.lineTo(10, -124 + bob);
+            ctx.lineTo(0, -96 + bob);
+            ctx.closePath();
+            ctx.fill();
+
+            // 3. 머리 & 머리띠(헤드밴드)
+            const headY = -146 + bob;
+            ctx.fillStyle = '#fed7aa'; // 피부톤
+            ctx.beginPath();
+            ctx.arc(0, headY, 21, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 헤어 스타일 (철권 카즈야/진 스타일 뾰족 머리)
+            ctx.fillStyle = f.isPlayer ? '#1e293b' : '#450a0a';
+            ctx.beginPath();
+            ctx.moveTo(-21, headY - 4);
+            ctx.lineTo(-26, headY - 22);
+            ctx.lineTo(-8, headY - 18);
+            ctx.lineTo(0, headY - 30);
+            ctx.lineTo(12, headY - 19);
+            ctx.lineTo(24, headY - 24);
+            ctx.lineTo(20, headY - 4);
+            ctx.closePath();
+            ctx.fill();
+
+            // 머리띠 (헤드밴드)
+            ctx.fillStyle = f.secondaryColor;
+            ctx.fillRect(-20, headY - 9, 40, 6);
+
+            // 눈매 (강렬한 눈빛)
+            ctx.fillStyle = f.isPlayer ? '#0284c7' : '#ef4444';
+            ctx.fillRect(6 * dir - (dir === 1 ? 0 : 7), headY - 2, 7, 3.5);
+
+            // 4. 팔 & 글러브 (펀치 / 가드 애니메이션 핵심)
+            let leftExtension = 0;
+            let rightExtension = 0;
+
+            if (f.state === 'LEFT_PUNCH') {
+                // 부드럽게 뻗었다 돌아오는 사인 곡선
+                leftExtension = Math.sin(f.punchProgress * Math.PI) * 95;
+            } else if (f.state === 'RIGHT_PUNCH') {
+                rightExtension = Math.sin(f.punchProgress * Math.PI) * 112;
+            }
+
+            // 가드 상태일 때는 양손을 얼굴 앞으로 바짝 올림
+            const guardOffsetX = f.state === 'GUARD' ? 16 * dir : 0;
+            const guardOffsetY = f.state === 'GUARD' ? -24 : 0;
+
+            // 뒷손(오른손 강타용) 먼저 그리기
+            const backHandX = (-8 * dir) + (rightExtension * dir) + guardOffsetX;
+            const backHandY = -104 + bob + guardOffsetY;
+            drawArmAndGlove(ctx, -10 * dir, -112 + bob, backHandX, backHandY, f.gloveColor, f.state === 'RIGHT_PUNCH');
+
+            // 앞손(왼손 잽용) 나중에 그리기
+            const frontHandX = (22 * dir) + (leftExtension * dir) + guardOffsetX;
+            const frontHandY = -98 + bob + guardOffsetY;
+            drawArmAndGlove(ctx, 12 * dir, -108 + bob, frontHandX, frontHandY, f.gloveColor, f.state === 'LEFT_PUNCH');
+
+            // 가드 쉴드 이펙트
+            if (f.state === 'GUARD') {
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(24 * dir, -105 + bob, 44, -Math.PI * 0.4, Math.PI * 0.4, dir === -1);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        function drawArmAndGlove(c, shoulderX, shoulderY, handX, handY, gloveColor, isPunching) {
+            // 팔뚝
+            c.strokeStyle = '#fed7aa';
+            c.lineWidth = 12;
+            c.beginPath();
+            c.moveTo(shoulderX, shoulderY);
+            c.lineTo(handX, handY);
+            c.stroke();
+
+            // 펀치 잔상(궤적 이펙트)
+            if (isPunching) {
+                c.save();
+                c.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+                c.lineWidth = 18;
+                c.beginPath();
+                c.moveTo(shoulderX, handY);
+                c.lineTo(handX, handY);
+                c.stroke();
+                c.restore();
+            }
+
+            // 격투 글러브
+            c.fillStyle = gloveColor;
+            c.beginPath();
+            c.arc(handX, handY, isPunching ? 16 : 13, 0, Math.PI * 2);
+            c.fill();
+            c.strokeStyle = '#ffffff';
+            c.lineWidth = 2;
+            c.stroke();
+        }
+
+        // --- 파티클 & 텍스트 업데이트/렌더링 ---
+        function updateAndDrawEffects() {
+            // 파티클
+            for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                const p = gameState.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.35; // 중력
+                p.life--;
+
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                if (p.life <= 0) gameState.particles.splice(i, 1);
+            }
+
+            // 플로팅 데미지/가드 텍스트
+            for (let i = gameState.floatingTexts.length - 1; i >= 0; i--) {
+                const ft = gameState.floatingTexts[i];
+                ft.y += ft.vy;
+                ft.life--;
+
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, ft.life / ft.maxLife);
+                ctx.font = '900 22px "Black Han Sans", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 4;
+                ctx.strokeText(ft.text, ft.x, ft.y);
+                ctx.fillStyle = ft.color;
+                ctx.fillText(ft.text, ft.x, ft.y);
+                ctx.restore();
+
+                if (ft.life <= 0) gameState.floatingTexts.splice(i, 1);
+            }
+        }
+
+        // --- HUD UI 동기화 ---
+        function updateHUD() {
+            const p1Pct = Math.max(0, Math.round((player.hp / player.maxHp) * 100));
+            const aiPct = Math.max(0, Math.round((ai.hp / ai.maxHp) * 100));
+
+            p1HpBar.style.width = `${p1Pct}%`;
+            p1HpText.textContent = `${p1Pct}%`;
+            aiHpBar.style.width = `${aiPct}%`;
+            aiHpText.textContent = `${aiPct}%`;
+
+            // 콤보 표시
+            if (player.combo >= 2) {
+                p1ComboBox.style.opacity = '1';
+                p1ComboCount.textContent = player.combo;
+            } else {
+                p1ComboBox.style.opacity = '0';
+            }
+        }
+
+        // --- 메인 게임 루프 ---
+        function gameLoop(timestamp) {
+            requestAnimationFrame(gameLoop);
+
+            // 카메라 모션 인식 실행
+            processCameraMotion();
+
+            const w = fightCanvas.width;
+            const h = fightCanvas.height;
+
+            // 역경직(Hit-Stop) 중일 때는 렌더링만 유지하고 물리 업데이트 일시 정지
+            if (gameState.hitStopFrames > 0) {
+                gameState.hitStopFrames--;
+                return;
+            }
+
+            // 라운드 타이머 (1초마다 감소)
+            if (gameState.isRunning && !gameState.isGameOver) {
+                if (!gameState.lastTimerTick) gameState.lastTimerTick = timestamp;
+                if (timestamp - gameState.lastTimerTick >= 1000) {
+                    gameState.lastTimerTick = timestamp;
+                    gameState.timeLeft = Math.max(0, gameState.timeLeft - 1);
+                    timerText.textContent = gameState.timeLeft;
+                    if (gameState.timeLeft === 0) {
+                        endBattle(player.hp >= ai.hp, true);
+                    }
+                }
+
+                // 파이터 업데이트
+                player.update(ai, w);
+                ai.update(player, w);
+                updateHUD();
+            }
+
+            // 화면 그리기
+            ctx.clearRect(0, 0, w, h);
+            drawArenaBackground(w, h);
+
+            // 파이터 렌더링 (상대방보다 앞에 나오도록 공격 중인 캐릭터를 나중에 그림)
+            if (player.state === 'LEFT_PUNCH' || player.state === 'RIGHT_PUNCH') {
+                drawFighter(ai);
+                drawFighter(player);
+            } else {
+                drawFighter(player);
+                drawFighter(ai);
+            }
+
+            // 이펙트 렌더링
+            updateAndDrawEffects();
+
+            // 타격 시 화면 플래시 효과
+            if (gameState.flashAlpha > 0) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${gameState.flashAlpha})`;
+                ctx.fillRect(0, 0, w, h);
+                gameState.flashAlpha = Math.max(0, gameState.flashAlpha - 0.04);
+            }
+        }
+
+        // --- 게임 시작 & 종료 제어 ---
+        function startBattle() {
+            SoundFX.init();
+            centerOverlay.classList.add('hidden');
+            koBanner.classList.add('hidden');
+
+            const w = fightCanvas.width;
+            player.reset(w * 0.32);
+            ai.reset(w * 0.68);
+
+            gameState.timeLeft = 60;
+            gameState.lastTimerTick = 0;
+            gameState.isGameOver = false;
+            gameState.isRunning = true;
+            gameState.particles = [];
+            gameState.floatingTexts = [];
+            timerText.textContent = '60';
+            aiStateBadge.textContent = '⚔️ MASTER AI 전투 개시!';
+            updateHUD();
+
+            spawnFloatingText(w / 2, fightCanvas.height * 0.4, 'FIGHT!', '#facc15');
+        }
+
+        function endBattle(playerWon, isTimeOver = false) {
+            gameState.isGameOver = true;
+            SoundFX.playKO();
+            aiStateBadge.textContent = playerWon ? '💀 패배 (K.O.)' : '👑 승리!';
+
+            koTitle.textContent = isTimeOver ? 'TIME OVER!' : 'K.O.!';
+            koSubtitle.textContent = playerWon ? '🎉 YOU WIN! 플레이어 승리!' : '😈 MASTER AI WINS! 인공지능 승리!';
+            koSubtitle.className = `font-arcade text-2xl sm:text-4xl mt-2 mb-6 ${playerWon ? 'text-cyan-300' : 'text-red-400'}`;
+
+            setTimeout(() => {
+                koBanner.classList.remove('hidden');
+            }, 750);
+        }
+
+        // --- 이벤트 리스너 연결 ---
+        toggleCamBtn.addEventListener('click', () => {
+            SoundFX.init();
+            if (gameState.cameraActive) {
+                stopCamera();
+            } else {
+                startCamera();
+            }
+        });
+
+        document.getElementById('startWithCamBtn').addEventListener('click', async () => {
+            await startCamera();
+            startBattle();
+        });
+
+        document.getElementById('startNoCamBtn').addEventListener('click', () => {
+            startBattle();
+        });
+
+        document.getElementById('restartBtn').addEventListener('click', () => {
+            startBattle();
+        });
+
+        // 민감도 슬라이더 동기화
+        function syncSensitivity(val) {
+            gameState.sensitivity = Number(val);
+            sensitivitySlider.value = val;
+            quickSensitivity.value = val;
+            quickSensLabel.textContent = val;
+
+            let label = '보통';
+            if (val <= 24) label = '매우 민감';
+            else if (val <= 32) label = '민감';
+            else if (val >= 50) label = '둔감';
+            sensitivityValue.textContent = `${label} (${val})`;
+        }
+
+        sensitivitySlider.addEventListener('input', (e) => syncSensitivity(e.target.value));
+        quickSensitivity.addEventListener('input', (e) => syncSensitivity(e.target.value));
+
+        // 키보드 조작 (Z: 왼손 잽, X: 오른손 강타, C: 가드, 화살표: 이동 및 점프)
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+                gameState.keys[e.code] = true;
+            }
+            if (!gameState.isRunning || gameState.isGameOver) return;
+            const key = e.key.toLowerCase();
+            if (key === 'z' || key === 'a') {
+                player.startPunch('LEFT');
+            } else if (key === 'x' || key === 's' || e.code === 'Space') {
+                e.preventDefault();
+                player.startPunch('RIGHT');
+            } else if (key === 'c' || key === 'd') {
+                player.startGuard(28);
+            } else if (e.code === 'ArrowUp' || key === 'w') {
+                e.preventDefault();
+                player.jump();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+                gameState.keys[e.code] = false;
+            }
+        });
+
+        // 하단 터치/마우스 버튼 조작
+        document.getElementById('btnMoveLeft').addEventListener('click', () => {
+            SoundFX.init();
+            if (gameState.isRunning && !gameState.isGameOver) player.moveHorizontal(-38, fightCanvas.width);
+        });
+        document.getElementById('btnMoveRight').addEventListener('click', () => {
+            SoundFX.init();
+            if (gameState.isRunning && !gameState.isGameOver) player.moveHorizontal(38, fightCanvas.width);
+        });
+        document.getElementById('btnJump').addEventListener('click', () => {
+            SoundFX.init();
+            if (gameState.isRunning && !gameState.isGameOver) player.jump();
+        });
+        document.getElementById('btnLeftPunch').addEventListener('click', () => {
+            SoundFX.init();
+            if (gameState.isRunning && !gameState.isGameOver) player.startPunch('LEFT');
+        });
+        document.getElementById('btnRightPunch').addEventListener('click', () => {
+            SoundFX.init();
+            if (gameState.isRunning && !gameState.isGameOver) player.startPunch('RIGHT');
+        });
+        document.getElementById('btnGuard').addEventListener('click', () => {
+            SoundFX.init();
+            if (gameState.isRunning && !gameState.isGameOver) player.startGuard(28);
+        });
+
+        // 초기화 및 시작
+        window.addEventListener('resize', resizeCanvas);
+        window.onload = async () => {
+            resizeCanvas();
+            requestAnimationFrame(gameLoop);
+            startBattle();
+            try {
+                await startCamera();
+            } catch (e) {
+                // 카메라 권한이 없어도 키보드/버튼으로 즉시 플레이 가능
+            }
+        };
+    </script>
+</body>
+</html>
